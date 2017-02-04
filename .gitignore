@@ -8,6 +8,7 @@ venv/*
 #temp stuff
 parse.py
 server.log
+tmp/*
 
 #editor specifics
 .vscode/*
