@@ -1,0 +1,13 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+#virtual env stuff
+venv/*
+
+#temp stuff
+parse.py
+server.log
+
+#editor specifics
+.vscode/*
