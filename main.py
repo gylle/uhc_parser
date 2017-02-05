@@ -7,8 +7,7 @@ import jsonpickle
 import click
 from logbook import Logger, StreamHandler
 
-from parser import parse
-from counter import count_highscore
+from parser import parse, count_highscore
 
 @click.command()
 @click.option('--debug', is_flag=True, default=False, help='Turn on debugging')

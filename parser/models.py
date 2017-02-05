@@ -316,32 +316,3 @@ class Team(object):
                            .format(nick=nick, team=self.team_name))
             return True
         return False
-
-#The big list of method names and corresponding regexps
-REGEXPS = [('new_player', re.compile(r'UUID of player (?P<player>.*) is (?P<uuid>.*)')),
-           ('set_player_ip', re.compile(r'\[INFO\] (?P<player>.*)\[/(?P<ip>.*):\d+\] logged in')),
-           ('set_team_color',
-            re.compile(r'\[INFO\] Set option color for team (?P<team>\w+) to (?P<color>\w+)')),
-           ('set_player_team',
-            re.compile(r'\[INFO\] Added \d player\(s\) to team (?P<team>\w+): (?P<members>.*)')),
-           ('killing',
-            re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§[0-9a-z]){0,1} \
-            was slain by (?:§[0-9a-z]){0,1}(\w+)(?:§[0-9a-z]){0,1}')),
-           ('killing', re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§[0-9a-z]){0,1} \
-           was shot by (?:§[0-9a-z]){0,1}(\w+)(?:§[0-9a-z]){0,1}')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. blew up')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. fell from a high place')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. burned to death')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. \
-           was burnt to a crisp whilst fighting')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. drowned')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. tried to swim in lava')),
-           ('accident', re.compile(r'\[INFO\] §.(?P<died>\w+)§. hit the ground too hard')),
-           ('player_survival', re.compile(r"\[INFO\] Set (?P<player>\w+)'s \
-           game mode to Survival Mode")),
-           ('player_survival', re.compile(r"\[INFO\] \[\w+: Set (?P<player>\w+)'s \
-           game mode to Survival Mode\]")),
-           ('player_survival', re.compile(r"\[INFO\] \[(?P<player>\w+): Set own game mode \
-           to Survival Mode\]")),
-           ('player_survival', re.compile(r"\[INFO\] Could not clear the inventory of \
-           (?P<player>\w+), no items to remove")),]
