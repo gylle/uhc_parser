@@ -1,0 +1,5 @@
+click==6.7
+Logbook==1.0.0
+pylint==1.6.5
+jsonpickle==0.9.4
+Unidecode==0.4.20

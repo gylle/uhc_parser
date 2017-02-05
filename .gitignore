@@ -7,7 +7,7 @@ venv/*
 
 #temp stuff
 parse.py
-server.log
+*.log
 tmp/*
 
 #editor specifics
