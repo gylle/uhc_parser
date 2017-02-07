@@ -162,12 +162,14 @@ class Server(object):
             for team in self.teams.items():
                 if set(team[1].players) == set(self.games[-1].players):
                     self.winning_team = team[1]
+                    self.stop(self.lines[-1])
                     return True
             return False
         elif players_left == 1:
             for team in self.teams.items():
                 if self.games[-1].players[0] in team[1].players:
                     self.winning_team = team[1]
+                    self.stop(self.lines[-1])
                     return True
             self.log.error("IMPOSSIBLE! One player left but not in a team?!")
         return False
@@ -211,7 +213,7 @@ class Server(object):
         #do we have a winner?
         if not self.winning_team:
             self.not_valid = "no_winner"
-            print(self)
+            #print(self)
             return False
         self.not_valid = False
         return True

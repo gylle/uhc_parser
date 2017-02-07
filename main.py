@@ -27,7 +27,7 @@ def start_parse(debug, file, save):
     servers = parse(file)
     #count
     highscore_table = count_highscore(servers)
-
+    print(jsonpickle.encode(highscore_table))
     if save:
         log.debug('Saving data to json files')
         for key, server in servers.items():
