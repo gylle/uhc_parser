@@ -140,6 +140,12 @@ class Game(object):
             else:
                 team = self._player_info[player]['team']
         #If we get here, all remaining players are on the same team
+        tm_pl = []
+        for player in self.get_playing_players():
+            if self._player_info[player]['team'] == team:
+                tm_pl.append(player)
+        self._log.append({'action':'team_win', 'team': team, 'players': tm_pl})
+        self._log.append({'action':'survivors', 'players': list(players)})
         self.stopped = True
         self.state = State.STOPPED
         self.winning_team = team
@@ -151,6 +157,18 @@ class Game(object):
             if info.get('uuid') is not None and info.get('team') is not None:
                 yield player
 
+    def to_json(self):
+        """ Return the game as an JSON object """
+        raise NotImplementedError
+
+    def get_actions(self):
+        """ returns actions that we should count towards scoring """
+        for action in self._log:
+                yield action
+
+    def player_info(self, player):
+        """ Returns the players information """
+        return self._player_info.get(player)
 
 class Store(object):
     """ Store class for storing games """

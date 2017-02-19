@@ -3,10 +3,11 @@
 #Copyright 2017 Tobias Gustavsson <tobias at rackrymd.se>
 #License - See LICENSE file
 from sys import stdout
+import json
 import jsonpickle
 import click
 from logbook import Logger, StreamHandler
-from parser import parse
+from parser import parse, score_count
 
 #TODO: Games restarts where team is not set and player modes changes is not counted
 #Example: 2015-05-19 21:28:01
@@ -27,8 +28,9 @@ def start_parse(debug, file, save):
     log.debug('Starting up...')
 
     games = parse(file)
-
+    highscore = score_count(games)
     print("Games:", games.count)
+    print("HS:", json.dumps(highscore))
     if save:
         log.debug('Saving data to json files')
         for game in games.items():
