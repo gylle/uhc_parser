@@ -59,13 +59,11 @@ class Highscore(object):
         """ count the points for survivors """
         for player in action['players']:
             self.players[player]['survived'] = self.players[player]['survived'] + 1
-        print("asd", action)
 
     def count_team_win(self, action):
         """ count the players in a team for scoring """
         for player in action['players']:
             self.players[player]['wins'] = self.players[player]['wins'] + 1
-        print("kaka", action)
 
     def count_game(self, player):
         """ Add a game to the player since playing """
