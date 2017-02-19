@@ -1,2 +1,2 @@
-from .parser import parse
-from .count import count_highscore
+""" submodule parser """
+from . parser import parse
