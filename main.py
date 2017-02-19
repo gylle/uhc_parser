@@ -2,430 +2,403 @@
 #Copyright 2017 Tobias Gustavsson <tobias at rackrymd.se>
 #License - See LICENSE file
 from sys import stdout
-import jsonpickle
+from datetime import datetime, timedelta
 import re
 import operator
-from enum import Enum
+from enum import Enum, auto
+import jsonpickle
 import click
 from logbook import Logger, StreamHandler
-from datetime import datetime, timedelta
+
+#TODO: Games restarts where team is not set and player modes changes is not counted
+#Example: 2015-05-19 21:28:01
 
 def get_datetime(line):
-    return datetime.strptime(line[0:19], "%Y-%m-%d %X")
+    """ Convert a logline to a datetime for the log entry """
+    return datetime.strptime(line, "%Y-%m-%d %X")
 
-#from parser import parse, count_highscore
+def death(data, reason=None):
+    """ Creates a action log entry for a players death """
+    action = {'action': 'death', 'player': data[1], 'timestamp':data[0], 'reason': reason}
+    if len(data) > 2:
+        action['killed_by'] = data[2]
+    return action
 
-class UHCParser(object):
-    """The little class that only parse the files, splitting it up into different server chunks"""
-    log = Logger('UHCParser')
-    def __init__(self, filename):
-        self.servers = ServerStore()
-        self._file = filename
+def game_start(data):
+    """ Creates an action log entry for game start"""
+    action = {'action': 'game_start',
+              'timestamp': data[0],
+              'end_blocks': data[1],
+              'start_blocks': data[2],
+              'seconds': data[3]}
+    return action
 
-    def run(self):
-        """ Run the actual parsing of the server log file"""
-        with open(self._file, 'r') as file:
-            for line in file:
-            #check each line if it is starting
-                if "Starting minecraft server version" in line[27:]:
-                    #check if the previous server have been stopped
-                    if self.servers.count > 0:
-                        if self.servers.last.stop_time is None:
-                            self.log.debug("Forced stopp of {server}"
-                                           .format(server=self.servers.last))
-                            self.servers.last.stop()
-                    self.log.debug("New server found at {date}".format(date=line[0:16]))
-                    self.servers.add(Server(line))
-                #or stopping
-                elif "Stopping server" in line[27:]:
-                    self.log.debug("Server stopping")
-                    self.servers.last.stop(line)
-                #ignore
-                elif "Successfully found the block at" in line[27:]:
-                    continue
-                #handle it
-                elif "This crash report has been saved to:" in line[28:]:
-                    self.log.debug("Server crash!")
-                    #read the next 20 or so lines so we don't start a new server.
-                    for i in range(20):
-                        event = file.readline()
-                        self.servers.last.add_event(event)
-                #handle normal events
-                else:
-                    self.servers.last.add_event(line)
-            self.servers.last.stop()
-        return self.servers
+def player_mode(data):
+    """ Creates an action log entry when players mode changes """
+    action = {'action': 'player_mode',
+              'timestamp': data[0],
+              'player': data[1],
+              'mode': data[2]}
+    return action
+
+def team_color(data):
+    """ Creates an action log entry for team color """
+    action = {'action': 'team_color',
+              'timestamp': data[0],
+              'team': data[1],
+              'color': data[2]}
+    return action
+
+def team_members(data):
+    """ Creates an action log entry for team creation and member assigment"""
+    action = {'action': 'team_members',
+              'timestamp': data[0],
+              'team': data[1]}
+    players = []
+    for player in data[2].split(' '):
+        if 'and' in player:
+            continue
+        players.append(player.rstrip(','))
+    action['players'] = players
+    return action
+
+def server_start(data):
+    """ Create an action log entry for server start """
+    action = {'action': 'server_start',
+              'timestamp': data[0],
+              'version': data[1]}
+    return action
+
+def server_stop(data):
+    """ Create an action log entry for server stop """
+    action = {'action': 'server_stop',
+              'timestamp': data[0]}
+
+    return action
+
+def server_crash(data):
+    """ Create an action log entry for server crash """
+    action = {'action': 'server_crash',
+              'timestamp': data[0],}
+    return action
+
+def player_join(data):
+    """ Create an action log entry for when a player joins """
+    action = {'action':'player_join',
+              'timestamp': data[0],
+              'player': data[1],
+              'uuid': data[2]}
+    return action
+
+def player_ip(data):
+    """ Create an action log entry for a players ip address """
+    action = {'action':'player_ip',
+              'timestamp': data[0],
+              'player': data[1],
+              'ipaddress': data[2]}
+    return action
+
+#Big list of regexes and the function we want to apply to it for formatting the data back
+ACTIONS = [(re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' was slain by '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'), death, 'slain'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' was shot by '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'), death, 'shot'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' blew up'), death, 'blew_up'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' was blown up by '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'), death, 'blown_up'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' suffocated in a wall'), death, 'suffocated_wall'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' fell from a high place'), death, 'fell'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' burned to death'), death, 'burned'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' was burnt to a crisp whilst fighting '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'), death, 'burned_fighting'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' drowned'), death, 'drowned'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' tried to swim in lava'), death, 'lava'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+)'
+                       r' \[INFO\] (?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1} '
+                       r'tried to swim in lava to escape (?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'),
+            death, 'lava_escape'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'(?:[§?][0-9a-z]){0,1}(\w+)(?:[§?]r){0,1}'
+                       r' hit the ground too hard'), death, 'fell_hit'),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Shrinking world border to '
+                       r'(\d+.\d) blocks wide '
+                       r'\(down from (\d+.\d) blocks\) over (\d+) seconds'), game_start),
+           (re.compile(r"(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] \[\w+: Set (\w+)'s"
+                       r" game mode to (\w+) Mode\]"), player_mode),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] \[(\w+): Set own '
+                       r'game mode to (\w+) Mode\]'), player_mode),
+           (re.compile(r"(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Set (\w+)'s "
+                       r"game mode to (\w+) Mode"), player_mode),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] UUID of player (?P<player>.*) '
+                       r'is (?P<uuid>.*)'), player_join),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] (?P<player>.*)\[/(?P<ip>.*):\d+\]'
+                       r' logged in'), player_ip),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Set option color'
+                       r' for team (?P<team>\w+) to (?P<color>\w+)'), team_color),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Added \d player\(s\)'
+                       r' to team (?P<team>\w+): (?P<members>.*)'), team_members),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Could not add \d player\(s\) '
+                       r'to team (?P<team>\w+): (?P<members>.*)'), team_members),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
+                       r'Starting minecraft server version (.*)'), server_start),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\]'
+                       r' .*Stopping the server.*'), server_stop),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[ERROR\] This crash report has been saved to:'),
+            server_crash)]
+
+class State(Enum):
+    """ Enumerate the state a game can be in """
+    STARTED = auto()
+    STOPPED = auto()
+    CRASHED = auto()
+    ABORTED = auto()
 
 class Game(object):
-    """Represent a game played. It should have big list of actions that happened in the Game
-    """
-    # list of tuples containing regex and corresponding method to call if match
-    # [(regex, method), ...]
-    GACTIONS = [
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' was slain by '
-                    r'(?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' was shot by '
-                    r'(?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' blew up'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' was blown up by '
-                    r'(?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' suffocated in a wall'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' fell from a high place'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' burned to death'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' was burnt to a crisp whilst fighting '
-                    r'(?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' drowned'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' tried to swim in lava'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' tried to swim in lava to escape '
-                    r'(?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'), 'death'),
-        (re.compile(r'\[INFO\] (?:§[0-9a-z]){0,1}(\w+)(?:§r){0,1}'
-                    r' hit the ground too hard'), 'death'),
-        (re.compile(r'\[INFO\] Shrinking world border to (\d+.\d) blocks wide '
-                    r'\(down from (\d+.\d) blocks\) over (\d+) seconds'), 'game_start'),
-        (re.compile(r"(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] \[\w+: Set (\w+)'s"
-                    r" game mode to (\w+) Mode\]"), 'player_mode'),
-        (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] \[(\w+): Set own '
-                    r'game mode to (\w+) Mode\]'), 'player_mode'),
-        (re.compile(r"(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Set (\w+)'s "
-                    r"game mode to (\w+) Mode"), 'player_mode'),]
-    def __init__(self, server):
-        self._actions = server._actions
-        self.server = server
-        self._players = server.get_players()
-        self._game_start = 0
-        self.game_stopped = False
-        self.log = Logger('Game')
-        self.team_size = 0
+    """ Simple container for calculating game stuff like players, teams, winners """
+    def __init__(self, start_action):
+        self.sid = get_datetime(start_action['timestamp'])
+        self._log = [start_action]
+        self.mc_version = start_action['version']
+        self._stop_log = []
+        self.stopped = False
+        self.game_started = None
+        self.game_info = {}
+        self._teams = {}
+        self._players = []
+        self._deaths = []
+        self._player_info = {}
+        self.log = Logger('Game '+start_action['timestamp'])
+        self._state = State.STARTED
         self.winning_team = None
 
-    def run(self):
-        """ Parse the game data for actions that are important to the game (scoring etc) """
-        for event in self.server.get_events():
-            if not self.game_stopped:
-                for action in self.GACTIONS:
-                    #try all registered actions
-                    match = action[0].search(event)
-                    if match:
-                        #if it is a match, call the method defined
-                        getattr(self, action[1])(match.groups())
+    def __repr__(self):
+        return "<Game {start}>".format(start=self.sid.isoformat())
 
-    def count(self):
-        """ Count the number of actions"""
-        return len(self._actions)
+    @property
+    def state(self):
+        """ Expose the game/server state, can only be set to Class State instance """
+        return self._state
 
-    def player_mode(self, data):
-        """ Call when a player gets the survival mode setting on him (start and revivals) """
-        action = {'action':'player_mode',
-                  'time': data[0],
-                  'player': data[1],
-                  'player_mode': data[2]}
+    @state.setter
+    def state(self, state):
+        if isinstance(state, State):
+            self._state = state
 
-        self._actions.append(action)
+    def game_start(self, action):
+        """ The game is ON! """
+        self._players = [player for player in self.get_playing_players()]
+        self.game_started = len(self._log)
+        self.game_info = action
 
-    def death(self, data):
-        """ Someone died and probably killed by some(one/thing)"""
-        if len(data) > 1:
-            action = {'action': 'kill',
-                      'died': data[0],
-                      'by':data[1],
-                      'player': self.is_player(data[1])}
+    def add_action(self, action):
+        """ Add an action to the log if active game, else save it for prosperity """
+        if not self.stopped:
+            #save the action to the general log
+            self._log.append(action)
+            #check if this did something to alter state
+            self.check_action(action)
         else:
-            action = {'action': 'death', 'died': data[0]}
-        self._actions.append(action)
+            self._stop_log.append(action)
 
-    def game_start(self, data):
-        """ Game start, might happen a couple of times """
-        action = {'action': 'game_start', 'blocks': data[0], 'start': data[1], 'time': data[2]}
-        self._actions.append(action)
-        self._game_start = len(self._actions) - 1
+    def check_action(self, action):
+        """ Check if the action did something we should register """
+        #get this class method from the action
+        method = getattr(self, action['action'], None)
+        if method is not None:
+            #call the method with the action
+            method(action)
 
-    def is_player(self, name):
-        """ Returns true if the name is a player in the game, else false"""
-        for player in self._players:
-            if name == player:
-                return True
-        return False
+    def death(self, action):
+        """ Someone did something that should be counted as a score """
+        #Not kill
+        if len(action) < 5:
+            self.log.debug("Player {p} died reason {r} "
+                           .format(p=action['player'], r=action['reason']))
+        else:
+            #killed
+            self.log.debug("Player {p} was killed by {p2} "
+                           .format(p=action['player'], p2=action['killed_by']))
+        self._deaths.append(action['player'])
+        #Was this the winning move?
+        self.check_for_winner()
 
-    def validate(self):
-        """ Validate that the game was complete and had a winner """
-        if not self.check_for_winner():
-            self.log.debug("Couldn't find a winner for the game")
-            return False
-        if self._game_start == 0:
-            self.log.debug("Didn't find that the game started this round...")
-            return False
-        if self.team_size == 0:
-            self.log.debug("The teams wasn't big enough for playing")
-            return False
-        if self.winning_team is None:
-            self.log.debug("Couldn't determine winner for {srv}".format(srv=self.server))
-            return False
+    def player_mode(self, action):
+        """ Handle a player mode change """
+        self.log.debug("Player {p} mode changed: {m}"
+                       .format(p=action['player'], m=action['mode']))
+        if action['mode'] == 'Survival':
+            if action['player'] not in self._players:
+                self._players.append(action['player'])
+        else:
+            if action['player'] in self._players and not self.stopped:
+                self._players.remove(action['player'])
 
-        return True
+    def player_join(self, action):
+        """ Register player when someone joins """
+        self.log.debug("Player {p} joined game {g}"
+                       .format(p=action['player'], g=self))
+        player = self._player_info.get(action['player'])
+        if player is not None:
+            player['uuid'] = action['uuid']
+        else:
+            self._player_info[action['player']] = {'uuid': action['uuid']}
+
+    def player_ip(self, action):
+        """ Sets a players ip address """
+        self.log.debug("Player {p} have ip-address {ip}"
+                       .format(p=action['player'], ip=action['ipaddress']))
+        player = self._player_info.get(action['player'])
+        player = {**player, **{'ipaddress': action['ipaddress']}}
+        #unnessary assignment?
+        self._player_info[action['player']] = player
+
+    def team_members(self, action):
+        """ Set team info on players """
+        for player in action['players']:
+            g_player = self._player_info.get(player)
+            if g_player is not None:
+                g_player['team'] = action['team']
+            else:
+                self._player_info[player] = {'team': action['team']}
+
+            self.log.debug("Player {p} in team {team}"
+                           .format(p=player, team=action['team']))
 
     def check_for_winner(self):
-        """ Determine if we have winner yet"""
-        alive = []
-        dead = []
-        if len(self._players) > 0:
-            counts = {}
-            for player in self._players.items():
-                counts[player[1]['team']] = counts.get(player[1]['team'], 0) + 1
-                #append the nick of all players playing
-                alive.append(player[0])
-            #get the largest team size of active players so we know how many winners we can have
-            self.team_size = max(counts.items(), key=operator.itemgetter(1))[1]
-        else:
-            self.team_size = 0
-        #print(alive)
-        for index, action in enumerate(self._actions[self._game_start:]):
-            #print(action)
-            typ = action.get('action')
-            if typ == 'kill':
-                dead.append(action['died'])
-            elif typ == 'death':
-                dead.append(action['died'])
-            elif typ == 'player_mode':
-                if action['player_mode'] == 'Survival':
-                    if action['player'] in dead:
-                        dead.remove(action['player'])
+        """ Check the info if we only have one team left (and the winners!) """
+        #just loop through all players and see if they belong to the same team
+        t_players = [player for player in self.get_playing_players()]
+        if len(t_players) < 3:
+            #Not a valid game, can't decide on a winner.
+            self.stopped = True
+            self.state = State.ABORTED
+            return
+        team = None
+        players = set(t_players) - set(self._deaths)
+        for player in players:
+            if team is not None:
+                if team != self._player_info[player]['team']:
+                    #We do not have a winner, more teams still alive
+                    return
+            else:
+                team = self._player_info[player]['team']
+        #If we get here, all remaining players are on the same team
+        self.stopped = True
+        self.state = State.STOPPED
+        self.winning_team = team
 
-            size = len(alive) - len(dead)
-            if size <= self.team_size:
-                #we can have a winner if all players is on the same team
-                tmp_players = set(alive) - set(dead)
-                def check_team(tmp_players, players):
-                    """ Why would a local def need a doc string?"""
-                    team = None
-                    for player in tmp_players:
-                        if team is None:
-                            team = players[player]['team']
-                        elif team != players[player]['team']:
-                            return False
-                    return team
-                team = check_team(tmp_players, self._players)
-                if team is not False:
-                    self.winning_team = team
-                    self._actions = self._actions[:index+self._game_start]
-                    self._actions.append({'action':'win',
-                                          'team': team,
-                                          'alive': [play for play in tmp_players],
-                                          'details': self.server.get_team(team)})
-                    print("TEAM WON!!!", team)
-                    return True
+    def get_playing_players(self):
+        """ Return all players as a list that have joined the server and has a team set
+        This can be used when player modes is not set in the beginning for some reason """
+        for player, info in self._player_info.items():
+            if info.get('uuid') is not None and info.get('team') is not None:
+                yield player
 
-            #print("died:", dead)
-        return False
 
 class Store(object):
-    """ Base class for storage of items for the UHCParser"""
+    """ Store class for storing games """
     def __init__(self):
         self._store = []
 
-    def add(self, data):
-        """ Add something to the store"""
-        self._store.append(data)
-
     @property
     def last(self):
-        """ Accessing the last added entity in the store"""
-        return self._store[-1]
+        """ Expose the last item in store as Store.last """
+        if len(self._store) > 0:
+            return self._store[-1]
+        else:
+            return None
 
     @property
     def count(self):
-        """Has the number of items in the store"""
+        """ The number of games in the store """
         return len(self._store)
 
+    def add(self, game):
+        """ Add a game to the store """
+        self._store.append(game)
+
     def items(self):
-        """ Returns all items in store as a generator"""
+        """ Generator for returning the games in the store """
         for item in self._store:
-            yield item
+            if item.state == State.STOPPED:
+                yield item
 
-class ServerStore(Store):
-    """ServerStore, subclasses Store and specialize for Server class stuff """
-    log = Logger('ServerStore')
-    def items(self):
-        for server in self._store:
-            if server.validate():
-                yield server
-
-    def add(self, server):
-        """Overrides the Store class add
-        Checks if the previous server quit before it was time and add the events together
-        Discards the new server created by not storing it :)
-        """
-        if self.count == 0:
-            return super(ServerStore, self).add(server)
-
-        span = self._store[-1].stop_time - self._store[-1].start_time
-        if span < timedelta(minutes=30):
-            self.log.debug("Merged two servers: {server1} + {server2}"
-                           .format(server2=server, server1=self._store[-1]))
-            for event in server.get_events():
-                self._store[-1].add_event(event)
-            self._store[-1].restart()
+GAME_STORE = Store()
+def handle_action(action):
+    """ Handles the action we matched, checks to see if should create/stop a game
+    else adds it to an existing game for evaluation """
+    #Check if the server did something we need to handle
+    #like start, stop or crashed
+    log = Logger('handle_action')
+    if action['action'] == 'server_start':
+        if GAME_STORE.last is not None:
+            if GAME_STORE.last.state == State.CRASHED:
+                GAME_STORE.last.add_action(action)
+                log.debug("Game {g} crashed, continuing with same game"
+                          .format(g=GAME_STORE.last.sid))
+                return
+            elif GAME_STORE.last.state == State.STARTED:
+                # Mark the last game as aborted since we will start a new one
+                GAME_STORE.last.state = State.ABORTED
+        GAME_STORE.add(Game(action))
+        log.debug("Created new game {g}".format(g=GAME_STORE.last.sid))
+    elif action['action'] == 'server_stop':
+        if GAME_STORE.last is None:
+            return
+        if GAME_STORE.last.winning_team is not None:
+            GAME_STORE.last.state = State.STOPPED
         else:
-            return super(ServerStore, self).add(server)
+            GAME_STORE.last.state = State.ABORTED
+        log.debug("Stopped game {g}".format(g=GAME_STORE.last.sid))
+    elif action['action'] == 'server_crash':
+        if GAME_STORE.last is not None:
+            GAME_STORE.last.state = State.CRASHED
+            log.info("Game {g} crashed".format(g=GAME_STORE.last.sid))
+    else:
+        if GAME_STORE.last is not None:
+            GAME_STORE.last.add_action(action)
 
-def sort_members(data):
-    """ Simple function to return players in team formatted correctly"""
-    members = []
-    for nick in data[1].split():
-        nick = nick.strip(',')
-        if nick == 'and':
-            continue
-        members.append(nick)
-    return {'action': 'team', 'team': data[0], data[0]: {'members': members}}
-
-#Big list of regexes and the function we want to apply to it for formatting the data back
-ACTIONS = [(re.compile(r'UUID of player (?P<player>.*) is (?P<uuid>.*)'),
-            lambda data: {'action':'player', 'nick':data[0], data[0]: {'uuid': data[1]}}),
-           (re.compile(r'\[INFO\] (?P<player>.*)\[/(?P<ip>.*):\d+\] logged in'),
-            lambda data: {'action':'player', 'nick':data[0], data[0]: {'ipaddress': data[1]}}),
-           (re.compile(r'\[INFO\] Set option color for team (?P<team>\w+) to (?P<color>\w+)'),
-            lambda data: {'action':'team', 'team': data[0], data[0]: {'color': data[1]}}),
-           (re.compile(r'\[INFO\] Added \d player\(s\) to team (?P<team>\w+): (?P<members>.*)'),
-            sort_members),
-           (re.compile(r'\[INFO\] Could not add \d player\(s\) '
-                       r'to team (?P<team>\w+): (?P<members>.*)'),
-            sort_members),]
-class Server(object):
-    """Represents the lifespan of a UHC Server, altough multiple restarts can be in the same server
-    if they are deemed to belong to each other for game restarts and stuff"""
-    def __init__(self, line):
-        self._events = [line]
-        self._actions = []
-        self.sid = line[0:16]
-        self.log = Logger('Server {date}'.format(date=self.sid))
-        self.start_time = get_datetime(line)
-        self.stop_time = None
-        self._players = {}
-        self._teams = {}
-
-    def __repr__(self):
-        return "<Server {server}>".format(server=self.sid)
-
-    def add_event(self, event):
-        """Add an event to a server to be parsed for actions"""
-        self._events.append(event)
-        for item in ACTIONS:
-            match = item[0].search(event)
-            if match:
-                action = item[1](match.groups())
-                self._actions.append(action)
-                # check what kind of action it is
-                if action['action'] == 'player':
-                    #player, get player from the store
-                    player = self._players.get(action['nick'])
-                    if player is not None:
-                        #if it exits, combine the two dicts
-                        player = {**player, **action[action['nick']]}
+def parse(logfile):
+    """ Parse the UHC server log file for entries """
+    with open(logfile, 'r') as file:
+        for line in file:
+            for action in ACTIONS:
+                match = action[0].search(line)
+                if match:
+                    if action[1] == death:
+                        #if it is the death, include how death happend
+                        data = action[1](match.groups(), action[2])
                     else:
-                        #else overwrite player info
-                        player = action[action['nick']]
-                    self._players[action['nick']] = player
-                elif action['action'] == 'team':
-                    # first off, check if it's going to set team members
-                    members = action[action['team']].get('members')
-                    if members is not None:
-                        #check if player already in another team
-                        #then delete that player from that team. UGH...
-                        for team in self._teams.items():
-                            reg_memb = team[1].get('members')
-                            if reg_memb is not None:
-                                for player in members:
-                                    if player in reg_memb:
-                                        reg_memb.remove(player)
-                                        self.log.debug("Deleting player {p} from {t}"
-                                                       .format(p=player, t=team[0]))
-                    #get the team from the store
-                    team = self._teams.get(action['team'])
-                    if team is not None:
-                        #exists, combine
-                        team = {**team, **action[action['team']]}
-                    else:
-                        team = action[action['team']]
-                    self.log.debug("Added {p} to team {t}"
-                                   .format(p=action[action['team']], t=action['team']))
-                    self._teams[action['team']] = team
-
-    def get_players(self):
-        """Return the players that are partaking in the actual game
-        Should remove fake team members and people only observing"""
-        #This should return {'nickname':{'uuid': uuid, 'team': team}}
-        players = {}
-        for player in self._players.items():
-            team = player[1].get('team')
-            uuid = player[1].get('uuid')
-            #a player needs to have both team and uuid (joined server)
-            #for it to count
-            if team is not None and uuid is not None:
-                players[player[0]] = player[1]
-            else:
-                #todo: understand why they dont get have a team..
-                self.log.debug("{p} was missing either uuid/team: {u}/{t}"
-                               .format(p=player[0], u=uuid, t=team))
-
-        return players
-    def get_team(self, team):
-        """ Return the team wanted """
-        return self._teams.get(team)
-
-    def stop(self, event=None):
-        """ Stop the server, sets date and stuff"""
-        self.log.debug("{server} stopping...".format(server=self))
-        if not event:
-            event = self._events[-1]
-        self.stop_time = get_datetime(event)
-        self.add_event(event)
-        #Add team to player
-        for player in self._players.items():
-            for name, team in self._teams.items():
-                members = team.get('members')
-                if members is not None:
-                    if player[0] in members:
-                        player[1]['team'] = name
-
-        #print("players ", self._players)
-        #print("teams ", self._teams)
-
-    def restart(self):
-        """ A server that has been restarted should be fixed"""
-        self.stop_time = None
-        self.log.debug("{server} restarted".format(server=self))
-
-    def get_events(self):
-        """ A generator that will loop through all events and return them"""
-        for event in self._events:
-            yield event
-
-    def validate(self):
-        """Is this a valid game/server"""
-        if self.stop_time is None:
-            self.log.warn("{server} has no stop time.".format(server=self))
-            return False
-
-        span = self.stop_time - self.start_time
-        if span < timedelta(minutes=30):
-            self.log.debug("{server} only ran for {minutes}."
-                           .format(server=self, minutes=str(span)))
-            return False
-
-        #not enough teams to compete...
-        if len(self._teams) < 2:
-            return False
-        return True
+                        data = action[1](match.groups())
+                    handle_action(data)
+    print("No. of games:", GAME_STORE.count)
+    cnt = 0
+    for game in GAME_STORE.items():
+        #games has been parsed, actions, winners sets
+        #TODO: time to count player scores and save game info
+        print(game, game.winning_team, game.state)
+        cnt = cnt + 1
+    print("good games", cnt)
 
 @click.command()
 @click.option('--debug', is_flag=True, default=False, help='Turn on debugging')
@@ -442,24 +415,9 @@ def start_parse(debug, file, save):
     log = Logger('main')
     log.debug('Starting up...')
 
-    parser = UHCParser(file)
-    servers = parser.run()
-    games = Store()
-    for server in servers.items():
-        game = Game(server)
-        game.run()
-        #Sometimes people play with the server without there being a game
-        #remove those, we only want real games.
-        if game.validate():
-            games.add(game)
-        print(game.server.sid, game.count())
+    parse(file)
 
-    print("Games:", games.count)
-    #parsing file 1.0
-    #servers = parse(file)
-    #count
-    #highscore_table = count_highscore(servers)
-    #print(jsonpickle.encode(highscore_table))
+    #print("Games:", games.count)
     #if save:
     #    log.debug('Saving data to json files')
     #    for key, server in servers.items():
