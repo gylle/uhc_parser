@@ -28,17 +28,24 @@ def start_parse(debug, file, save):
     log.debug('Starting up...')
 
     games = parse(file)
-    highscore = score_count(games)
-    print("Games:", games.count)
-    print("HS:", json.dumps(highscore))
+
+    log.info("Games:", games.count)
     if save:
         log.debug('Saving data to json files')
+        l_game = []
         for game in games.items():
-            filename = save+game.sid.strftime("%Y-%m-%d_%H%M%S")+".json"
-
+            name = game.sid.strftime("%Y-%m-%d_%H%M%S")
+            l_game.append(name)
+            filename = save+name+".json"
             with open(filename, 'w') as file:
                 file.write(jsonpickle.encode(game))
                 log.debug("wrote game info to {file}".format(file=filename))
+            filename = save+'hs2017.json'
+        highscore = score_count(games)
+        data = {'games': l_game, 'highscore': highscore}
+        with open(filename, 'w') as file:
+            log.debug("wrote highscore info to {file}".format(file=filename))
+            file.write(json.dumps(data))
 
     log.debug('End of program...')
 
