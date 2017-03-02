@@ -164,6 +164,9 @@ ACTIONS = [(re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
                        r' to team (?P<team>\w+): (?P<members>.*)'), team_members),
            (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] Could not add \d player\(s\) '
                        r'to team (?P<team>\w+): (?P<members>.*)'), team_members),
+           (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] \[(?:\w+): '
+                       r'Added \d player\(s\) to team (?P<team>\w+): '
+                       r'(?P<members>.*)\]'), team_members),
            (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\] '
                        r'Starting minecraft server version (.*)'), server_start),
            (re.compile(r'(\d+-\d+-\d+ \d+:\d+:\d+) \[INFO\]'

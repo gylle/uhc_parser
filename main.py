@@ -1,5 +1,5 @@
-""" Main file for uhc parser, run this from the commandline """
 #!/bin/env - python
+""" Main file for uhc parser, run this from the commandline """
 #Copyright 2017 Tobias Gustavsson <tobias at rackrymd.se>
 #License - See LICENSE file
 from sys import stdout
